@@ -9,22 +9,19 @@
         }
 
         video#local {
-            width: 320px;
-            height: 240px;
-            border: 2px solid aqua;
-        }
-
-        div#main{
-            width: 320px;
-            display: table-cell;
-            vertical-align: middle;
-            text-align: center;
+            width: 240px;
+            border: 3px solid darkred;
         }
 
         video {
-            width: 160px;
-            height: 120px;
-            border: 1px solid black;
+            width: 120px;
+            border: 1px solid cornflowerblue;
+        }
+
+        label{
+            background-color: cadetblue;
+            font-size: 2em;
+            padding: 10px;
         }
 
     </style>
@@ -33,10 +30,11 @@
 
 </head>
 <body onload="domReady()">
-<div id="main"></div>
+<label id="uuid">undefined</label>
+<div id="main">
+
+
+</div>
 <div id="others"></div>
-
-
-
 </body>
 </html>

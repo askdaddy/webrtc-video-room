@@ -1,11 +1,13 @@
-let serverConnection;
+let signalConnection;
 const peerConnections = {};
 let localStream;
+let localId = undefined;
+
 const peerConf = {
     'iceServers': [
-        {'url': 'stun:stun.services.mozilla.com'},
+        {'urls': 'stun:stun.services.mozilla.com'},
         {'urls': 'stun:stun.stunprotocol.org:3478'},
-        {'urls': 'stun:stun.l.google.com:19302'}
+        // {'urls': 'stun:stun.l.google.com:19302'}
     ]
 }
 const constraints = {
@@ -14,126 +16,14 @@ const constraints = {
 }
 
 function domReady() {
-    serverConnection = new WebSocket('wss://' + window.location.hostname + ':8443');
-    serverConnection.onmessage = messageHandler;
-
-    serverConnection.onopen = function () {
-        if (navigator.mediaDevices.getUserMedia) {
-            navigator.mediaDevices.getUserMedia(constraints)
-                .then(getUserMediaSuccess)
-                .catch(console.error);
-        } else {
-            alert('Your browser does not support getUserMedia API');
-        }
-    }
-}
-
-function messageHandler(message) {
-    if (!message.data || typeof message.data !== "string") return;
-    const signal = JSON.parse(message.data)
-        , uuid = signal.uuid;
-
-    console.log(signal);
-    if (signal.join) {
-        console.log('on join >>',signal);
-        call(uuid);
-        return;
-    }
-
-    const _pc = launchPeer(uuid);
-    if (!_pc) return;
-
-
-    if (signal.sdp) {
-        console.log(`sdp: `, signal);
-        _pc.setRemoteDescription(new RTCSessionDescription(signal.sdp))
-            .then(function () {
-                if (signal.sdp.type == 'offer') {
-                    _pc.createAnswer()
-                        .then(function (desc) {
-                            createdDescription(_pc, desc);
-                        })
-                        .catch(console.error);
-                }
-            })
+    if (navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia(constraints)
+            .then(getUserMediaSuccess)
             .catch(console.error);
-    }
-
-    if (signal.ice) {
-        console.log(`ice: `, signal);
-        _pc.addIceCandidate(new RTCIceCandidate(signal.ice))
-            .catch(console.error);
-    }
-
-    if (signal.close) {
-        // TODO remove <video> object.
-        console.info(signal);
-        const close_tag = document.getElementById(signal.uuid);
-        if (close_tag) close_tag.remove();
-        peerConnections[signal.uuid] = undefined;
+    } else {
+        alert('Your browser does not support getUserMedia API');
     }
 }
-
-
-function call(uuid) {
-    const tmpPeerConn = new RTCPeerConnection(peerConf);
-    peerConnections[uuid] = tmpPeerConn;
-    tmpPeerConn.onicecandidate = gotIceCandidate;
-    tmpPeerConn.ontrack = function (ev) {
-        gotRemoteStream(uuid, ev.streams[0]);
-    }
-    tmpPeerConn.addStream(localStream);
-
-    tmpPeerConn.createOffer()
-        .then(function (desc) {
-            createdDescription(tmpPeerConn, desc)
-        })
-        .catch(console.error);
-
-}
-
-function launchPeer(uuid) {
-    console.log(`launchPeer:`, uuid);
-    let _pc = peerConnections[uuid];
-    if (!_pc) {
-        _pc = new RTCPeerConnection(peerConf);
-        peerConnections[uuid] = _pc;
-        // return console.error(`empty peer`);
-    }
-    _pc.onicecandidate = gotIceCandidate;
-    _pc.ontrack = function (ev) {
-        gotRemoteStream(uuid, ev.streams[0]);
-    };
-    _pc.addStream(localStream);
-    return _pc;
-}
-
-function gotIceCandidate(ev) {
-    console.log(`got ice: `, ev.candidate);
-    if (ev.candidate !== null) {
-        serverConnection.send(JSON.stringify({'ice': ev.candidate}));
-    }
-}
-
-function gotRemoteStream(uuid, stream) {
-    console.log('got remote stream: ', uuid);
-    const others = document.getElementById("others");
-    const _media = document.createElement("video");
-    _media.setAttribute("autoplay", "autoplay");
-    _media.setAttribute("id", uuid);
-
-    others.append(_media);
-    _media.srcObject = stream;
-}
-
-function createdDescription(pc, description) {
-    if (!pc) return;
-    console.log('createdDescription');
-    pc.setLocalDescription(description).then(function () {
-        serverConnection.send(JSON.stringify({'sdp': pc.localDescription}));
-    }).catch(console.error);
-}
-
 
 function getUserMediaSuccess(stream) {
     localStream = stream;
@@ -143,11 +33,132 @@ function getUserMediaSuccess(stream) {
     local_media.setAttribute("muted", true);
     local_media.setAttribute("autoplay", "autoplay");
     local_media.setAttribute("controls", "");
-
-    local_media.srcObject = stream;
+    local_media.srcObject = localStream;
     main.append(local_media);
 
-    serverConnection.send(JSON.stringify({"join": true}));
+    connectSignal();
+}
+
+function connectSignal() {
+    signalConnection = new WebSocket('wss://' + window.location.hostname + ':8443');
+    signalConnection.onmessage = signalHandler;
+}
+
+function signalHandler(message) {
+    const signal = JSON.parse(message.data)
+        , uuid = signal.uuid
+        , cmd = signal.cmd;
+
+    let _pc;
+    switch (cmd) {
+        case "onserve":
+            // got UUID from signal server.
+            const idLabel = document.getElementById("uuid");
+            if (idLabel) idLabel.innerHTML = `uuid: ${uuid}`;
+            localId = uuid;
+            broadcast({"cmd": "join"});
+            break;
+        case "close":
+            console.log(`peer[${uuid}] closed.`);
+            const close_tag = document.getElementById(uuid);
+            if (close_tag) close_tag.remove();
+            _pc = peerConnections[uuid]
+            if(_pc){
+                _pc.close();
+            }
+            peerConnections[uuid] = undefined;
+            break;
+        case "join":
+            _pc = launchPeer(uuid);
+            if (_pc)
+                _pc.createOffer()
+                    .then(function (desc) {
+                        createdDescription(uuid, desc)
+                    })
+                    .catch(console.error);
+            break;
+        case "ice":
+            _pc = launchPeer(uuid);
+            if (_pc)
+                _pc.addIceCandidate(new RTCIceCandidate(signal.ice))
+                    .catch(console.error);
+            break;
+        case "sdp":
+            _pc = launchPeer(uuid);
+            if (_pc)
+                _pc.setRemoteDescription(new RTCSessionDescription(signal.sdp))
+                    .then(function () {
+                        if (signal.sdp.type == 'offer') {
+                            _pc.createAnswer()
+                                .then(function (desc) {
+                                    createdDescription(uuid, desc);
+                                })
+                                .catch(console.error);
+                        }
+                    })
+                    .catch(console.error);
+            break;
+        default:
+            console.error(`cmd did not match any act.`, signal);
+            break;
+    }
+}
+
+function launchPeer(uuid) {
+    console.log(`launchPeer:`, uuid);
+    let _pc = peerConnections[uuid];
+    if (!_pc) {
+        console.log(`new peerConnection: `, uuid);
+        _pc = peerConnections[uuid] = new RTCPeerConnection(peerConf);
+        _pc.onicecandidate = function (ev) {
+            gotIceCandidate(uuid, ev.candidate);
+        };
+        _pc.ontrack = function (ev) {
+            gotRemoteStream(uuid, ev.streams[0]);
+        };
+
+        if (localStream)
+            _pc.addStream(localStream);
+    }
+    return _pc;
+}
+
+function gotIceCandidate(uuid, candidate) {
+    if (candidate !== null) {
+        sendTo({'cmd': 'ice', 'ice': candidate}, uuid);
+    }
+}
+
+function gotRemoteStream(uuid, stream) {
+    const others = document.getElementById("others");
+    const _media = document.createElement("video");
+    _media.setAttribute("autoplay", "autoplay");
+    _media.setAttribute("id", uuid);
+
+    others.append(_media);
+    _media.srcObject = stream;
+}
+
+function createdDescription(uuid, description) {
+    const pc = peerConnections[uuid];
+    if (!pc) return;
+    pc.setLocalDescription(description).then(function () {
+        sendTo({'cmd': 'sdp', 'sdp': pc.localDescription}, uuid);
+    }).catch(console.error);
+}
+
+function broadcast(data) {
+    if (!signalConnection) return console.error(`broadcast: No signal connection.`);
+    signalConnection.send(JSON.stringify(data));
+}
+
+function sendTo(data, uuid) {
+    if (!signalConnection) return console.error(`sendTo: No signal connection.`);
+    if (uuid) {
+        data['to'] = uuid;
+        signalConnection.send(JSON.stringify(data));
+    } else
+        console.error(`sendTo: empty UUID.`);
 }
 
 
