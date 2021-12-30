@@ -11,8 +11,18 @@ const peerConf = {
     ]
 }
 const constraints = {
-    video: true,
-    audio: false
+    video: {
+        aspectRatio:1.777777,
+        frameRate: 60
+    },
+    audio: {
+        autoGainControl: true,
+        echoCancellation: true,
+        noiseSuppression: true,
+        sampleRate: 24000,
+        channelCount: 1,
+        volume: 0.8
+    }
 }
 
 function domReady() {
@@ -63,7 +73,7 @@ function signalHandler(message) {
             const close_tag = document.getElementById(uuid);
             if (close_tag) close_tag.remove();
             _pc = peerConnections[uuid]
-            if(_pc){
+            if (_pc) {
                 _pc.close();
             }
             peerConnections[uuid] = undefined;
@@ -131,11 +141,14 @@ function gotIceCandidate(uuid, candidate) {
 
 function gotRemoteStream(uuid, stream) {
     const others = document.getElementById("others");
-    const _media = document.createElement("video");
-    _media.setAttribute("autoplay", "autoplay");
-    _media.setAttribute("id", uuid);
+    let _media = document.getElementById(`${uuid}`);
+    if (!_media) {
+        _media = document.createElement("video");
+        _media.setAttribute("autoplay", "autoplay");
+        _media.setAttribute("id", `${uuid}`);
 
-    others.append(_media);
+        others.append(_media);
+    }
     _media.srcObject = stream;
 }
 
